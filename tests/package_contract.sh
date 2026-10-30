@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VOKOP_MAKEFILE="$ROOT_DIR/vokop/Makefile"
 VOKOP_CONFIG="$ROOT_DIR/vokop/files/etc/config/vokop"
 BUILD_SCRIPT="$ROOT_DIR/build.sh"
-BUILD_WORKFLOW="$ROOT_DIR/.github/workflows/build.yml"
+RELEASE_POLICY_TEST="$ROOT_DIR/tests/release_workflow.sh"
 VOKOP_LIB="$ROOT_DIR/vokop/files/usr/lib"
 
 fail() {
@@ -45,7 +45,7 @@ require_package_dependency() {
 require_file "$VOKOP_MAKEFILE"
 require_file "$VOKOP_CONFIG"
 require_file "$BUILD_SCRIPT"
-require_file "$BUILD_WORKFLOW"
+require_file "$RELEASE_POLICY_TEST"
 require_file "$VOKOP_LIB"
 
 bash "$BUILD_SCRIPT" --help >/dev/null ||
@@ -66,16 +66,9 @@ grep -Fq '[[ ! -f "$luci_src_dir/po2lmo.c" ]]' "$BUILD_SCRIPT" ||
   fail "build.sh must use fakeroot for IPK ownership"
 [ "$(grep -Fc 'unshare -r sh -c' "$BUILD_SCRIPT")" -eq 1 ] ||
   fail "build.sh must use a user namespace for APK ownership"
-grep -Fq 'sudo apt-get install -y' "$BUILD_WORKFLOW" ||
-  fail "build workflow must own host dependency installation"
-grep -Fq 'sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0' "$BUILD_WORKFLOW" ||
-  fail "Ubuntu 24.04 build workflow must allow unprivileged user namespaces"
-grep -Fq './build.sh "$VERSION"' "$BUILD_WORKFLOW" ||
-  fail "build workflow must invoke the public build entrypoint"
-grep -Fq "replace('\\\\n', '\\n')" "$BUILD_WORKFLOW" ||
-  fail "build workflow must normalize escaped release-note line breaks"
-grep -Fq 'body: ${{ needs.preparation.outputs.release_notes }}' "$BUILD_WORKFLOW" ||
-  fail "release action must receive normalized Markdown notes"
+# Vokop deliberately has no automatic upstream release publisher.
+bash "$RELEASE_POLICY_TEST" || fail "Vokop release safety policy failed"
+grep -Fq "option enabled '0'" "$VOKOP_CONFIG" || fail "routing must require local opt-in"
 
 for conflict in https-dns-proxy nextdns luci-app-passwall luci-app-passwall2; do
   grep -E 'CONFLICTS:=' "$VOKOP_MAKEFILE" | grep -Fq "$conflict" ||

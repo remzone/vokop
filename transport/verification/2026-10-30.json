@@ -1,0 +1,178 @@
+{
+  "date_utc": "2026-10-30",
+  "go_version": "go1.25.5 linux/amd64",
+  "upstream_commit": "e8a96967dc66f3dbd631596ea6a8b9fe03f9be69",
+  "checks": {
+    "go_test_all": "passed",
+    "go_vet_all": "passed",
+    "go_test_race_count_1_all": "passed",
+    "go_mod_verify": "passed",
+    "sha256_manifest_check": "passed"
+  },
+  "test_pass_events": 25,
+  "top_level_tests": [
+    "TestStatusFileEnumModeAndCaptchaLatch",
+    "TestWANControlPreservesLoopback",
+    "TestWANControlFailsClosed",
+    "TestWANResolverAndDialerAreMarked",
+    "TestParseSliderCaptchaContentResponse",
+    "TestTrySliderCaptchaCandidates",
+    "TestEncodeSliderAnswer",
+    "TestRankSliderCandidatesPrefersMostCoherentImage",
+    "TestRenderSliderCandidateMatchesSwapLayout",
+    "TestParseCaptchaBootstrapHTML",
+    "TestParseCaptchaSettingsResponseSupportsJSONStringMap",
+    "TestParseSliderSteps",
+    "TestCaptchaSolveModeForAttempt",
+    "TestRewriteProxyRedirectLocation"
+  ],
+  "artifacts": [
+    {
+      "path": "dist/binaries/386/vokop-fetch",
+      "bytes": 5558456,
+      "sha256": "be4b2b3b5bfce107294a1a5aae61260cdd4b9e1fbfec0d6d0591beb10ff54f64",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/386/vokop-vk-client",
+      "bytes": 13123768,
+      "sha256": "48d008866451fbab6d4982db9ed9fcbe6d32e23255dbd8e11c882dd3b0c8f28e",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/amd64/vokop-fetch",
+      "bytes": 5685432,
+      "sha256": "dc4f67a83ad83f6152b8b4e67fd9079716c9d1ca3802d8621ad0dcdebd1d4804",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/amd64/vokop-vk-client",
+      "bytes": 14880952,
+      "sha256": "204d7fa207cd5f894a18bb9071a1ff9b095168ea0e4d25293bae488d63e6fde0",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/arm64/vokop-fetch",
+      "bytes": 5308600,
+      "sha256": "f5662f6c5c631792984afb54f5ece0c79c2e63a935bfe45a62d7d9589134283c",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/arm64/vokop-vk-client",
+      "bytes": 13041848,
+      "sha256": "85e8d759121889a507d32a0458485758c07a0a3f946d9b879b368b4922de7b22",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/armv6/vokop-fetch",
+      "bytes": 5701816,
+      "sha256": "d7402714ceca0d71e3fabfd207746f19e938131b479586e03fe1a7389a37a30f",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/armv6/vokop-vk-client",
+      "bytes": 13172920,
+      "sha256": "ab3368326a8fd9da33d94be23e5bdd939557fa869a9d08e3a503cbe3061f7fdd",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/armv7/vokop-fetch",
+      "bytes": 5636280,
+      "sha256": "c7f3453e7ef719fdc888e7a60c800b3414dd3aea29db04f151c91d7b04a6e108",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/armv7/vokop-vk-client",
+      "bytes": 13172920,
+      "sha256": "a754a6a0c39713363c489c428981baa6c971ebc479685607e17c05944cdc2847",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips/vokop-fetch",
+      "bytes": 6422743,
+      "sha256": "4c06a397e2426e6e404e716a43fee5f563a186218f0078b6942edabe91ac48f0",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips/vokop-vk-client",
+      "bytes": 14876887,
+      "sha256": "245fe5d30032b3b3a9a9278c938adcf8817f8760cc28969f0972c6be5f09c668",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips64/vokop-fetch",
+      "bytes": 6291640,
+      "sha256": "7f99e4065fea9c1ea65738ed7f1493c8e9fc304e56a08abc0cc68cdce2274971",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips64/vokop-vk-client",
+      "bytes": 15139000,
+      "sha256": "48d57c808f350b5b84c0b528c79c0d002bde31e2e8e7f4c35a9bea7adff0fe06",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips64le/vokop-fetch",
+      "bytes": 6291640,
+      "sha256": "e7b5ae07cc7a054125c5cee543d140f4500f81c711c557bd40446fc126491273",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mips64le/vokop-vk-client",
+      "bytes": 15073464,
+      "sha256": "ea1cdc9fd39ad61d7e79aba61bfc0a442bb2830af13d0dd3e9b4aab2cb7388c6",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mipsle/vokop-fetch",
+      "bytes": 6422743,
+      "sha256": "d284868a7fdc097081b825d1464258afa2ddb676cd0282cf7e4d86c241c90423",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/mipsle/vokop-vk-client",
+      "bytes": 14876887,
+      "sha256": "00da7c787db6f0fb947dce913fe3d8267989e0b7480e780df6518b9ee903cdcb",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/riscv64/vokop-fetch",
+      "bytes": 5439672,
+      "sha256": "76f0c1893e6356aec3ee280518f11ba765ab54a850a479d257fbf9cb5741d16c",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    },
+    {
+      "path": "dist/binaries/riscv64/vokop-vk-client",
+      "bytes": 13107384,
+      "sha256": "7be64d90d4cc9d610729accad49c2dd4a349aa3e215e237e608a3e5110c7a137",
+      "format": "static stripped Linux ELF",
+      "executed": false
+    }
+  ],
+  "not_tested": [
+    "OpenWrt SDK packaging in this transport verification",
+    "Live VK authentication or TURN sessions",
+    "Real CAPTCHA handling",
+    "Physical router compatibility, DNS, routing, or performance",
+    "3x-ui interoperability"
+  ]
+}

@@ -37,13 +37,26 @@ Current code only has the Linux mark implementation and is intended for OpenWrt.
 
 ## Verification status
 
-Source callsites reviewed. No transport binary, live VK call, CAPTCHA flow,
-router network mutation or OpenWrt SDK build executed. Official Go 1.25.5 is available and gofmt syntax validation passed.
-Upstream code execution approval is pending; compilation and live validation
-are not claimed.
+Verified on 2026-10-30 with official Go 1.25.5:
 
-Architecture candidates from upstream workflow: amd64, arm64, armv7, 386,
-mips/mipsle softfloat, mips64le and riscv64. These are NOT hardware test claims.
+- `go test ./...`: passed; client tests exercise synthetic fixtures only.
+- `go vet ./...`: passed.
+- `go test -race -count=1 ./...`: passed.
+- JSON test evidence: `dist/verification/transport-tests.json` (25 test/subtest
+  pass events, including loopback/fail-closed socket controls and sanitized status).
+- The independent patch applies cleanly to its pinned upstream snapshot.
+
+Linux cross-builds passed for amd64, arm64, armv7, armv6, 386, mips/mipsle
+softfloat, mips64/mips64le softfloat and riscv64: 20 static stripped binaries
+(transport plus fetch helper), all SHA-256 hashes verified. Structured results
+and hashes are in `verification/2026-10-30.json`. Binaries are build artifacts
+under `dist/binaries/`, not automatically installed or committed.
+
+No live VK call,
+real CAPTCHA challenge, router networking, or OpenWrt SDK build was performed
+by this transport verification. Passing tests do not demonstrate end-to-end
+connectivity or hardware compatibility. The source retains upstream synthetic
+CAPTCHA unit tests; unattended production mode does not solve challenges.
 
 ## OpenWrt package recipe
 
@@ -111,7 +124,11 @@ separate device test. A successful binary build is NOT an installable IPK/APK.
 
 Use a matching official SDK for the target router/release. Keep source outside
 its tree and add `src-link vokop /absolute/path/to/vokop` to its feeds configuration.
-Install the SDK's normal packages feed first, including a compatible `golang/host`.
+Install the SDK's normal packages feed first. Use a compatible `golang/host`,
+or export `VOKOP_GO_ROOT=/absolute/path/to/official/go` (Go 1.25.5+) before
+feed indexing and make commands. This explicit option skips the outdated SDK
+host-Go dependency and compiles from source using that local toolchain; it does
+not download or substitute prebuilt target binaries.
 Then install Vokop feed packages and build their SDK targets:
 
 ```

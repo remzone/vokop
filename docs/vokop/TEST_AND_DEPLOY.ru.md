@@ -19,6 +19,50 @@
 
 Используйте официальный SDK именно вашей версии OpenWrt с feeds packages/luci. Go host toolchain должен удовлетворять `transport/vk-turn-proxy/go.mod` (на момент реализации 1.25.5+). SDK старого выпуска может содержать слишком старый Go: не утверждайте совместимость только по наличию рецепта.
 
+### Проверенный способ для SDK 24.10.4 x86/64
+
+Нужны обычные build prerequisites OpenWrt (GNU make/gcc/g++, awk, rsync,
+ncurses headers, Python, Perl, git, unzip, zstd) и официальный Go 1.25.5+.
+Работайте в **отдельном чистом SDK**, не в каталоге прошивки рабочего роутера.
+Все команды ниже — на Linux-компьютере для сборки, не на роутере.
+Сохраните также base feed: без него не собираются TLS-зависимости curl/панели.
+Для воспроизводимости закрепите base на git-теге вашей прошивки (для примера `v24.10.4`),
+packages/luci — на коммитах из `feeds.buildinfo` SDK.
+
+```sh
+export VOKOP_GO_ROOT=/absolute/path/to/go
+export VOKOP_PACKAGE_VERSION=0.1.0
+cd /absolute/path/to/extracted-matching-openwrt-sdk
+# Сохраните нормальные feeds SDK. Добавьте ссылку на весь checkout Vokop:
+printf '\nsrc-link vokop /absolute/path/to/vokop\n' >> feeds.conf.default
+./scripts/feeds update base packages luci vokop
+./scripts/feeds install -a -p base
+./scripts/feeds install -p vokop vokop vokop-fetch vokop-vk-turn luci-app-vokop
+# В новом SDK задайте минимальную конфигурацию вместо всех пакетов/модулей:
+cat > .config <<'CONFIG'
+CONFIG_ALL_NONSHARED=n
+CONFIG_ALL_KMODS=n
+CONFIG_ALL=n
+CONFIG_PACKAGE_vokop=m
+CONFIG_PACKAGE_vokop-fetch=m
+CONFIG_PACKAGE_vokop-vk-turn=m
+CONFIG_PACKAGE_luci-app-vokop=m
+CONFIG_LUCI_LANG_ru=y
+CONFIG
+make defconfig
+make package/vokop-fetch/compile V=s
+make package/vokop-vk-turn/compile V=s
+make package/vokop/compile V=s
+make package/luci-app-vokop/compile V=s
+find bin/packages -path '*/vokop/*.ipk' -print
+```
+
+`VOKOP_GO_ROOT` выбирает локально установленный компилятор, а не готовые
+бинарники: SDK собирает оба Go-пакета из исходников. Без этой переменной
+используется `golang/host` из feeds; в штатном SDK 24.10.4 он слишком старый
+для транспорта. Не меняйте `go.mod` для обхода минимальной версии Go.
+Для других SDK/архитектур повторите сборку и стендовый чеклист отдельно.
+
 Репозиторий необходимо добавить в SDK **целиком**: recipes используют соседние `transport/` и `tools/`. Не копируйте один Makefile без исходников.
 
 1. Закрепите коммит `remzone/vokop`, сохраните его SHA.

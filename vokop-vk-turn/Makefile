@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Keep this package directory beside transport/ when adding the repository feed.
-VOKOP_SOURCE_ROOT:=$(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
+VOKOP_SOURCE_ROOT:=$(abspath $(dir $(realpath $(lastword $(MAKEFILE_LIST))))/..)
 
 include $(TOPDIR)/rules.mk
 
@@ -10,7 +10,7 @@ PKG_RELEASE:=1
 PKG_SOURCE_VERSION:=e8a96967dc66f3dbd631596ea6a8b9fe03f9be69
 PKG_LICENSE:=GPL-3.0-only MIT
 PKG_LICENSE_FILES:=LICENSE
-PKG_BUILD_DEPENDS:=golang/host
+PKG_BUILD_DEPENDS:=$(if $(VOKOP_GO_ROOT),,golang/host)
 PKG_BUILD_PARALLEL:=1
 PKG_BUILD_FLAGS:=no-mips16
 
@@ -21,8 +21,13 @@ GO_PKG_TAGS:=netgo osusergo
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
 
-# Avoid a runtime libc dependency; DNS stays on the marked pure-Go resolver.
-GO_PKG_VARS += CGO_ENABLED=0
+# Pure-Go static binaries: the SDK default external linker requires cgo.
+GO_PKG_VARS += CGO_ENABLED=0 GOFLAGS="-buildvcs=false"
+GO_PKG_DEFAULT_LDFLAGS:=-buildid $(SOURCE_DATE_EPOCH) -linkmode internal
+# Optional preinstalled official Go >= 1.25.5 for SDK feeds with older Go.
+ifneq ($(VOKOP_GO_ROOT),)
+GO_PKG_VARS += PATH="$(VOKOP_GO_ROOT)/bin:$(PATH)"
+endif
 
 define Package/vokop-vk-turn
   SECTION:=net

@@ -22,7 +22,7 @@ assert_tsv() {
   local expected_user_agent="$3"
   local parsed tab url user_agent
 
-  parsed="$(ucode "$PARSER" parse-source-entry-tsv "$entry")"
+  parsed="$(ucode -L "$ROOT_DIR/vokop/files/usr/lib" "$PARSER" parse-source-entry-tsv "$entry")"
   tab="$(printf '\t')"
   url="${parsed%%"$tab"*}"
   if [ "$url" = "$parsed" ]; then
@@ -40,7 +40,7 @@ assert_rejects() {
   local expected="$2"
   local output
 
-  if output="$(ucode "$PARSER" parse-source-entry-tsv "$entry" 2>/dev/null)"; then
+  if output="$(ucode -L "$ROOT_DIR/vokop/files/usr/lib" "$PARSER" parse-source-entry-tsv "$entry" 2>/dev/null)"; then
     fail "entry should be rejected: $entry"
   fi
   printf '%s\n' "$output" | grep -q "$expected" || fail "expected reject message containing $expected"
@@ -51,7 +51,8 @@ assert_tsv ' https://example.com/sub.txt ' 'https://example.com/sub.txt' ''
 assert_rejects 'https://example.com/a | Custom Agent/1.0' 'Configure User-Agent in the subscription item settings'
 assert_rejects 'https://example.com/a | Agent One | Agent Two' 'Configure User-Agent in the subscription item settings'
 assert_rejects 'https://example.com/a| Agent' 'Configure User-Agent in the subscription item settings'
-assert_rejects 'file:///tmp/sub.txt' 'Subscription URL must start with http:// or https://'
+assert_rejects 'http://example.com/sub' 'Subscription URL must start with https://'
+assert_rejects 'file:///tmp/sub.txt' 'Subscription URL must start with https://'
 
 cat >"$WORK_DIR/require-subscription-parser.uc" <<'UCODE'
 let parser = require("subscription.parser");
@@ -65,7 +66,7 @@ if (legacy.valid || legacy.error != "Configure User-Agent in the subscription it
     exit(1);
 
 let invalid = parser.parse_subscription_source_entry("file:///tmp/sub.txt");
-if (invalid.valid || invalid.error != "Subscription URL must start with http:// or https://")
+if (invalid.valid || invalid.error != "Subscription URL must start with https://")
     exit(1);
 UCODE
 

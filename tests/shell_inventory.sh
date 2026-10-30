@@ -44,7 +44,9 @@ shell_scripts="$(
 expected_shell_scripts="$(
   printf '%s\n' \
     'luci-app-vokop/root/etc/uci-defaults/50_luci-vokop' \
-    'vokop/files/etc/init.d/vokop' |
+    'vokop/files/etc/init.d/vokop' \
+    'vokop/files/etc/init.d/vokop-management' \
+    'vokop/files/etc/init.d/vokop-vkturn' |
     LC_ALL=C sort
 )"
 

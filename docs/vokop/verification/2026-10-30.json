@@ -1,0 +1,110 @@
+{
+  "date_utc": "2026-10-30",
+  "baseline_source_commit": "3674e1d052b315f3054e22a85273eb47f555646f",
+  "frontend": {
+    "vitest_files": 44,
+    "vitest_tests_passed": 507,
+    "eslint": "passed",
+    "typescript": "passed",
+    "tsup_build": "passed",
+    "luci_main_sha256": "da5530b10083572a572c1206ddf44f9dc2b38af7345c469138d3464f3fceb75f"
+  },
+  "backend": {
+    "shell_suites_passed": 60,
+    "python_tests_passed": 55,
+    "ucode_modules_compile": 61,
+    "management_queue": "passed",
+    "management_ui": "passed",
+    "network_and_services": "mocked",
+    "sdk_target_ucode_modules_compile": 61,
+    "sdk_target_ucode_python_tests_passed": 55
+  },
+  "fetch": {
+    "go_test_race": "passed",
+    "go_vet": "passed"
+  },
+  "transport_report": "transport/verification/2026-10-30.json",
+  "sdk": {
+    "version": "24.10.4",
+    "target": "x86/64",
+    "package_arch": "x86_64",
+    "archive": "openwrt-sdk-24.10.4-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst",
+    "sha256": "229e871f734a2cee5ce3ad6a3e98d3836b0899bfdeaea4d9c2c5cc7b1fce1407",
+    "base_commit": "78b23a26c4c98938d549e7ff5876508544e33d4d",
+    "packages_commit": "f1470815f41fe199bfdafe9a91ad115bc2e91203",
+    "luci_commit": "75e41cba5160281b2d1dca922719efef29f7ffd8",
+    "go": "go1.25.5 linux/amd64",
+    "build_status": "passed",
+    "packages": [
+      {
+        "filename": "luci-app-vokop_0.1.0_all.ipk",
+        "package": "luci-app-vokop",
+        "version": "0.1.0",
+        "architecture": "all",
+        "bytes": 232043,
+        "sha256": "0e2df982766e9d890bd4b17349564d0df0666637b512fd4a490386459843c1da",
+        "depends": "libc, luci-base, vokop",
+        "files": 32,
+        "root_ownership": true,
+        "no_world_writable": true
+      },
+      {
+        "filename": "luci-i18n-vokop-ru_0.1.0_all.ipk",
+        "package": "luci-i18n-vokop-ru",
+        "version": "0.1.0",
+        "architecture": "all",
+        "bytes": 20379,
+        "sha256": "e51458963926e1372171c313fedd0df99e0c2e37bda1a77d2643cafd900b7bfe",
+        "depends": "libc, luci-app-vokop",
+        "files": 10,
+        "root_ownership": true,
+        "no_world_writable": true
+      },
+      {
+        "filename": "vokop-fetch_0.1.0-r1_x86_64.ipk",
+        "package": "vokop-fetch",
+        "version": "0.1.0-r1",
+        "architecture": "x86_64",
+        "bytes": 2414591,
+        "sha256": "f260f8bbd473d149b0a50f837b50a37c62ad40db0fcd7ee1730ecb1c739bded9",
+        "depends": "libc, ca-bundle",
+        "files": 4,
+        "root_ownership": true,
+        "no_world_writable": true
+      },
+      {
+        "filename": "vokop-vk-turn_0.1.0-r1_x86_64.ipk",
+        "package": "vokop-vk-turn",
+        "version": "0.1.0-r1",
+        "architecture": "x86_64",
+        "bytes": 5738348,
+        "sha256": "5c5e4ea460d43c779df9cb7d63e2564067bbd178d30890415553e8ac3539a149",
+        "depends": "libc, ca-bundle",
+        "files": 8,
+        "root_ownership": true,
+        "no_world_writable": true
+      },
+      {
+        "filename": "vokop_0.1.0_all.ipk",
+        "package": "vokop",
+        "version": "0.1.0",
+        "architecture": "all",
+        "bytes": 287933,
+        "sha256": "b180d4c056629913830f3cc2623adc52fe226ac619699a4524e97954d0809e9d",
+        "depends": "libc, vokop-fetch, vokop-vk-turn, ca-bundle, kmod-inet-diag, kmod-netlink-diag, kmod-tun, curl, ucode, ucode-mod-fs, ucode-mod-uci, kmod-nft-tproxy, coreutils-base64, bind-dig, nftables, kmod-nft-nat, ip-full",
+        "files": 93,
+        "root_ownership": true,
+        "no_world_writable": true
+      }
+    ],
+    "package_contents_validation": "passed"
+  },
+  "not_run": [
+    "router_installation",
+    "real_vk_turn_connection",
+    "live_panel_integration",
+    "hardware_routing_dns_wifi_rollback",
+    "other_target_sdk_builds",
+    "apk_packaging"
+  ]
+}
