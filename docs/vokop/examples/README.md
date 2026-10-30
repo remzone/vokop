@@ -1,0 +1,1 @@
+These files are inert contract examples, not working credentials or live feeds. Replace timestamps in a private generated fixture before time-dependent validation; never publish actual subscription/device secrets. JSON Schema cannot detect duplicate raw JSON keys or enforce relative clock/revision constraints.

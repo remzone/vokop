@@ -1,0 +1,13 @@
+.idea
+fe-app-vokop/node_modules
+fe-app-vokop/.yarn/
+fe-app-vokop/.env
+.DS_Store
+
+sandbox/
+.build/
+dist/
+
+# Generated development artifacts
+__pycache__/
+*.pyc

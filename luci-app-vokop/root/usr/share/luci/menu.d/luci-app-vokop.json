@@ -1,0 +1,34 @@
+{
+  "admin/services/vokop": {
+    "title": "Vokop",
+    "order": 42,
+    "action": {
+      "type": "view",
+      "path": "vokop/vokop"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-vokop"
+      ],
+      "uci": {
+        "vokop": true
+      }
+    }
+  },
+  "admin/services/vokop_management": {
+    "title": "Vokop: Control via 3x-ui",
+    "order": 43,
+    "action": {
+      "type": "view",
+      "path": "vokop/management"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-vokop-management"
+      ],
+      "uci": {
+        "vokop_management": true
+      }
+    }
+  }
+}

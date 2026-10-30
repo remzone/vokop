@@ -1,0 +1,21 @@
+{
+  "schema": "vokop.subscription.v1",
+  "revision": 1,
+  "issued_at": 1792958400,
+  "expires_at": 1793044800,
+  "profiles": [
+    {
+      "id": "demo-vk-1",
+      "name": "Демонстрационный профиль, не подключать",
+      "vless": {
+        "uuid": "00000000-0000-4000-8000-000000000001"
+      },
+      "turn": {
+        "peer_host": "turn.example.com",
+        "peer_port": 56000,
+        "vk_call_url": "https://vk.com/call/join/DEMO_TOKEN",
+        "streams": 2
+      }
+    }
+  ]
+}

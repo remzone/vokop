@@ -1,0 +1,782 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <version> [output-directory]
+
+Build Vokop IPK and APK packages. The version must use x.y.z format.
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+# The inherited builder emits only architecture-independent packages. Never
+# mistake those for a complete release with native VK TURN/fetch dependencies.
+if [[ "${VOKOP_ALLOW_PARTIAL_PACKAGES:-0}" != "1" ]]; then
+  echo "Vokop requires native vokop-fetch and vokop-vk-turn packages for your target SDK." >&2
+  echo "Use the SDK feed procedure in transport/README.md. This legacy script is partial only." >&2
+  echo "Set VOKOP_ALLOW_PARTIAL_PACKAGES=1 only when also building native packages separately." >&2
+  exit 2
+fi
+
+if (( $# < 1 || $# > 2 )); then
+  usage >&2
+  exit 2
+fi
+
+RELEASE_VERSION="$1"
+OUTPUT_DIR="${2:-$ROOT_DIR/dist/release-final}"
+
+if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Expected release version in the form x.y.z" >&2
+  exit 2
+fi
+APK_INTERNAL_VERSION="$RELEASE_VERSION"
+
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/.build}"
+SDK_CACHE_DIR="${SDK_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/vokop/openwrt-sdk}"
+SDK_DIR="${SDK_DIR:-$SDK_CACHE_DIR/extracted}"
+IPK_SDK_URL="${IPK_SDK_URL:-https://downloads.openwrt.org/releases/24.10.6/targets/x86/64/openwrt-sdk-24.10.6-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst}"
+APK_SDK_URL="${APK_SDK_URL:-https://downloads.openwrt.org/releases/25.12.3/targets/x86/64/openwrt-sdk-25.12.3-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst}"
+
+BACKEND_DESCRIPTION="Rule-based Vokop backend with hybrid sing-box + zapret orchestration"
+APP_DESCRIPTION="Rule-based Vokop LuCI app with hybrid sing-box + zapret orchestration"
+I18N_DESCRIPTION="Translation for luci-app-vokop - Русский (Russian)"
+MAINTAINER="Vokop contributors"
+PROJECT_URL="${VOKOP_PROJECT_URL:-https://github.com/remzone/vokop}"
+BACKEND_DEPENDS_IPK="vokop-fetch, vokop-vk-turn, libc, ca-bundle, kmod-inet-diag, kmod-netlink-diag, kmod-tun, curl, ucode, ucode-mod-fs, ucode-mod-uci, kmod-nft-tproxy, coreutils-base64, bind-dig, nftables, kmod-nft-nat, ip-full"
+BACKEND_DEPENDS_APK="vokop-fetch vokop-vk-turn bind-dig ca-bundle coreutils-base64 curl ip-full kmod-inet-diag kmod-netlink-diag kmod-nft-nat kmod-nft-tproxy kmod-tun libc nftables ucode ucode-mod-fs ucode-mod-uci !podkop !luci-app-podkop !forkop !luci-app-forkop !https-dns-proxy !nextdns !luci-app-passwall !luci-app-passwall2"
+BACKEND_CONFLICTS_IPK="podkop, luci-app-podkop, forkop, luci-app-forkop, https-dns-proxy, nextdns, luci-app-passwall, luci-app-passwall2"
+APP_DEPENDS_IPK="libc, luci-base, vokop"
+APP_DEPENDS_APK="libc luci-base vokop"
+
+ensure_host_deps() {
+  local missing=()
+  local commands=(
+    curl
+    fakeroot
+    file
+    flock
+    gcc
+    git
+    make
+    patch
+    perl
+    sha256sum
+    tar
+    unshare
+    zstd
+  )
+
+  for cmd in "${commands[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      missing+=("$cmd")
+    fi
+  done
+
+  if (( ${#missing[@]} > 0 )); then
+    echo "Missing build dependencies: ${missing[*]}" >&2
+    exit 1
+  fi
+
+  if ! unshare -r true >/dev/null 2>&1; then
+    echo "Unprivileged user namespaces are required to build APK packages" >&2
+    exit 1
+  fi
+}
+
+download_sdk_archive() {
+  local url="$1"
+  local archive_path="$SDK_CACHE_DIR/$(basename "$url")"
+
+  mkdir -p "$SDK_CACHE_DIR"
+  if [[ ! -f "$archive_path" ]]; then
+    echo "Downloading SDK: $url" >&2
+    curl --fail --location --retry 3 --output "$archive_path.part" "$url"
+    mv "$archive_path.part" "$archive_path"
+  fi
+
+  printf '%s\n' "$archive_path"
+}
+
+extract_sdk() {
+  local kind="$1"
+  local archive_path="$2"
+  local sdk_url="$3"
+  local destination="$SDK_DIR/$kind"
+  local marker_file="$destination/.vokop-sdk-url"
+  local temp_dir
+  local extracted_root
+
+  mkdir -p "$SDK_DIR"
+  if [[ -d "$destination" && -f "$marker_file" ]] && [[ "$(cat "$marker_file")" == "$sdk_url" ]]; then
+    printf '%s\n' "$destination"
+    return 0
+  fi
+
+  rm -rf "$destination"
+  temp_dir="$(mktemp -d "$SDK_DIR/.${kind}.XXXXXX")"
+  trap 'rm -rf -- "$temp_dir"' EXIT
+  tar --zstd -xf "$archive_path" -C "$temp_dir"
+  extracted_root="$(find "$temp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  mv "$extracted_root" "$destination"
+  printf '%s\n' "$sdk_url" > "$marker_file"
+  rmdir "$temp_dir" 2>/dev/null || true
+  trap - EXIT
+
+  printf '%s\n' "$destination"
+}
+
+ensure_po2lmo() {
+  local ipk_sdk_dir="$1"
+  local po2lmo_bin="$ipk_sdk_dir/staging_dir/hostpkg/bin/po2lmo"
+  local luci_src_dir="$ipk_sdk_dir/feeds/luci/modules/luci-base/src"
+
+  if [[ -x "$po2lmo_bin" ]]; then
+    printf '%s\n' "$po2lmo_bin"
+    return 0
+  fi
+
+  (
+    cd "$ipk_sdk_dir"
+    if [[ ! -f "$luci_src_dir/po2lmo.c" ]]; then
+      rm -rf feeds/luci
+      ./scripts/feeds update luci >&2
+    fi
+  )
+
+  if [[ ! -f "$luci_src_dir/po2lmo" ]]; then
+    make -C "$luci_src_dir" po2lmo >&2
+  fi
+
+  printf '%s\n' "$luci_src_dir/po2lmo"
+}
+
+make_dir() {
+  mkdir -p "$1"
+}
+
+normalize_package_root_modes() {
+  local package_root="$1"
+
+  find "$package_root" -type d -exec chmod 0755 {} +
+  find "$package_root" -type f -exec chmod 0644 {} +
+}
+
+build_backend_root() {
+  local output_root="$1"
+
+  rm -rf "$output_root"
+  make_dir "$output_root/etc/init.d"
+  make_dir "$output_root/etc/config"
+  make_dir "$output_root/usr/bin"
+  make_dir "$output_root/usr/lib/vokop"
+
+  install -m 0755 "$ROOT_DIR/vokop/files/etc/init.d/vokop" "$output_root/etc/init.d/vokop"
+  install -m 0644 "$ROOT_DIR/vokop/files/etc/config/vokop" "$output_root/etc/config/vokop"
+  install -m 0644 "$ROOT_DIR/vokop/files/etc/config/vokop_management" "$output_root/etc/config/vokop_management"
+  install -m 0755 "$ROOT_DIR/vokop/files/etc/init.d/vokop-management" "$output_root/etc/init.d/vokop-management"
+  install -m 0755 "$ROOT_DIR/vokop/files/etc/init.d/vokop-vkturn" "$output_root/etc/init.d/vokop-vkturn"
+  install -m 0755 "$ROOT_DIR/vokop/files/usr/bin/vokop" "$output_root/usr/bin/vokop"
+  cp -a "$ROOT_DIR/vokop/files/usr/lib/." "$output_root/usr/lib/vokop/"
+
+  sed -i -e "s/__COMPILED_VERSION_VARIABLE__/${RELEASE_VERSION}/g" \
+    "$output_root/usr/lib/vokop/core/constants.uc"
+
+  normalize_package_root_modes "$output_root"
+  chmod 0755 "$output_root/etc/init.d/vokop" "$output_root/etc/init.d/vokop-management" "$output_root/usr/bin/vokop"
+}
+
+build_app_root() {
+  local output_root="$1"
+
+  rm -rf "$output_root"
+  make_dir "$output_root/www"
+
+  cp -a "$ROOT_DIR/luci-app-vokop/htdocs/." "$output_root/www/"
+  cp -a "$ROOT_DIR/luci-app-vokop/root/." "$output_root/"
+  sed -i -e "s/__COMPILED_VERSION_VARIABLE__/${RELEASE_VERSION}/g" \
+    "$output_root/www/luci-static/resources/view/vokop/main.js"
+
+  normalize_package_root_modes "$output_root"
+  find "$output_root/etc/uci-defaults" -type f -exec chmod 0755 {} + 2>/dev/null || true
+}
+
+build_i18n_root() {
+  local output_root="$1"
+  local po2lmo_bin="$2"
+  local lmo_path="$output_root/usr/lib/lua/luci/i18n/vokop.ru.lmo"
+
+  rm -rf "$output_root"
+  make_dir "$output_root/etc/uci-defaults"
+  make_dir "$(dirname "$lmo_path")"
+
+  cat > "$output_root/etc/uci-defaults/luci-i18n-vokop-ru" <<'EOF'
+uci set luci.languages.ru='Русский (Russian)'; uci commit luci
+EOF
+
+  "$po2lmo_bin" "$ROOT_DIR/luci-app-vokop/po/ru/vokop.po" "$lmo_path"
+
+  normalize_package_root_modes "$output_root"
+  find "$output_root/etc/uci-defaults" -type f -exec chmod 0755 {} + 2>/dev/null || true
+}
+
+generate_apk_metadata_files() {
+  local package_name="$1"
+  local package_root="$2"
+  shift 2
+  local conffile_paths=("$@")
+  local conffile_path
+  local list_file="$package_root/lib/apk/packages/${package_name}.list"
+
+  make_dir "$(dirname "$list_file")"
+  (
+    cd "$package_root"
+    find . -type f ! -path './lib/apk/packages/*' | LC_ALL=C sort | sed 's#^\./#/#'
+  ) > "$list_file"
+
+  if [[ ${#conffile_paths[@]} -gt 0 ]]; then
+    local conffiles_file="$package_root/lib/apk/packages/${package_name}.conffiles"
+    local conffiles_static_file="$package_root/lib/apk/packages/${package_name}.conffiles_static"
+    local hash_value
+    : > "$conffiles_file"
+    : > "$conffiles_static_file"
+    for conffile_path in "${conffile_paths[@]}"; do
+      [[ -n "$conffile_path" ]] || continue
+      hash_value="$(sha256sum "$package_root$conffile_path" | awk '{print $1}')"
+      printf '%s\n' "$conffile_path" >> "$conffiles_file"
+      printf '%s %s\n' "$conffile_path" "$hash_value" >> "$conffiles_static_file"
+    done
+  fi
+}
+
+installed_size_bytes() {
+  du -sk "$1" | awk '{print $1 * 1024}'
+}
+
+write_backend_ipk_control() {
+  local control_dir="$1"
+  local installed_size="$2"
+
+  rm -rf "$control_dir"
+  make_dir "$control_dir"
+
+  cat > "$control_dir/control" <<EOF
+Package: vokop
+Version: ${RELEASE_VERSION}
+Depends: ${BACKEND_DEPENDS_IPK}
+Conflicts: ${BACKEND_CONFLICTS_IPK}
+License: GPL-2.0-or-later
+Section: net
+URL: ${PROJECT_URL}
+Maintainer: ${MAINTAINER}
+Architecture: all
+Installed-Size: ${installed_size}
+Description: ${BACKEND_DESCRIPTION}
+EOF
+
+  cat > "$control_dir/conffiles" <<'EOF'
+/etc/config/vokop
+/etc/config/vokop_management
+EOF
+
+  cat > "$control_dir/postinst" <<'EOF'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+VOKOP_LIB=/usr/lib/vokop ucode -L /usr/lib/vokop /usr/lib/vokop/config/migration.uc migrate || exit $?
+/usr/bin/vokop package_postinst
+EOF
+
+  cat > "$control_dir/prerm" <<'EOF'
+#!/usr/bin/ucode
+
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
+	system("/usr/bin/vokop package_prerm " + (ARGV[0] || "") + " >/dev/null 2>&1");
+
+exit(0);
+EOF
+
+  chmod 0755 "$control_dir/postinst" "$control_dir/prerm"
+}
+
+write_app_ipk_control() {
+  local control_dir="$1"
+  local installed_size="$2"
+
+  rm -rf "$control_dir"
+  make_dir "$control_dir"
+
+  cat > "$control_dir/control" <<EOF
+Package: luci-app-vokop
+Version: ${RELEASE_VERSION}
+Depends: ${APP_DEPENDS_IPK}
+License: GPL-2.0-or-later
+Section: luci
+URL: ${PROJECT_URL}
+Maintainer: ${MAINTAINER}
+Architecture: all
+Installed-Size: ${installed_size}
+Description: ${APP_DESCRIPTION}
+EOF
+
+  cat > "$control_dir/postinst" <<'EOF'
+#!/bin/sh
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+default_postinst $0 $@
+EOF
+
+  cat > "$control_dir/prerm" <<'EOF'
+#!/bin/sh
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+default_prerm $0 $@
+EOF
+
+  chmod 0755 "$control_dir/postinst" "$control_dir/prerm"
+}
+
+write_i18n_ipk_control() {
+  local control_dir="$1"
+  local installed_size="$2"
+
+  rm -rf "$control_dir"
+  make_dir "$control_dir"
+
+  cat > "$control_dir/control" <<EOF
+Package: luci-i18n-vokop-ru
+Version: ${RELEASE_VERSION}
+Depends: libc, luci-app-vokop
+License: GPL-2.0-or-later
+Section: luci
+URL: ${PROJECT_URL}
+Maintainer: ${MAINTAINER}
+Architecture: all
+Installed-Size: ${installed_size}
+Description: ${I18N_DESCRIPTION}
+EOF
+
+  cat > "$control_dir/postinst" <<'EOF'
+#!/bin/sh
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+default_postinst $0 $@
+EOF
+
+  cat > "$control_dir/prerm" <<'EOF'
+#!/bin/sh
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+default_prerm $0 $@
+EOF
+
+  chmod 0755 "$control_dir/postinst" "$control_dir/prerm"
+}
+
+build_ipk_package() {
+  local ipkg_build_bin="$1"
+  local package_name="$2"
+  local data_root="$3"
+  local control_root="$4"
+  local output_file="$5"
+  local build_dir="$BUILD_DIR/manual/ipk-${package_name}"
+  local package_root="$build_dir/pkg"
+  local built_file
+
+  rm -rf "$build_dir"
+  make_dir "$package_root/CONTROL"
+
+  cp -a "$data_root/." "$package_root/"
+  cp -a "$control_root/." "$package_root/CONTROL/"
+
+  rm -f "$output_file"
+  fakeroot sh -c '
+    chown -R 0:0 "$1"
+    exec "$2" "$1" "$3"
+  ' sh "$package_root" "$ipkg_build_bin" "$build_dir" >/dev/null
+
+  built_file="$build_dir/${package_name}_${RELEASE_VERSION}_all.ipk"
+  [ -f "$built_file" ] || {
+    echo "Expected IPK artifact not found: $built_file" >&2
+    exit 1
+  }
+
+  mv "$built_file" "$output_file"
+}
+
+write_backend_apk_scripts() {
+  local scripts_dir="$1"
+
+  rm -rf "$scripts_dir"
+  make_dir "$scripts_dir"
+
+  cat > "$scripts_dir/backend-pre-install.sh" <<'EOF'
+#!/usr/bin/ucode
+exit(0);
+EOF
+
+  cat > "$scripts_dir/backend-post-install.sh" <<'EOF'
+#!/usr/bin/ucode
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
+    exit(system("VOKOP_LIB=/usr/lib/vokop ucode -L /usr/lib/vokop /usr/lib/vokop/config/migration.uc migrate && /usr/bin/vokop package_postinst"));
+exit(0);
+EOF
+
+  cat > "$scripts_dir/backend-pre-deinstall.sh" <<'EOF'
+#!/usr/bin/ucode
+
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
+	system("/usr/bin/vokop package_prerm remove >/dev/null 2>&1");
+
+exit(0);
+EOF
+
+  cat > "$scripts_dir/backend-pre-upgrade.sh" <<'EOF'
+#!/usr/bin/ucode
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
+    exit(system("/usr/bin/vokop package_prerm upgrade >/dev/null 2>&1"));
+exit(0);
+EOF
+
+  cat > "$scripts_dir/backend-post-upgrade.sh" <<'EOF'
+#!/usr/bin/ucode
+if (getenv("IPKG_INSTROOT") == null || getenv("IPKG_INSTROOT") == "")
+    exit(system("VOKOP_LIB=/usr/lib/vokop ucode -L /usr/lib/vokop /usr/lib/vokop/config/migration.uc migrate && /usr/bin/vokop package_postinst"));
+exit(0);
+EOF
+
+  chmod 0755 "$scripts_dir"/backend-*.sh
+}
+
+write_app_apk_scripts() {
+  local scripts_dir="$1"
+
+  make_dir "$scripts_dir"
+
+  cat > "$scripts_dir/app-pre-install.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+  cat > "$scripts_dir/app-post-install.sh" <<'EOF'
+#!/bin/sh
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-app-vokop"
+add_group_and_user
+default_postinst
+EOF
+
+  cat > "$scripts_dir/app-pre-deinstall.sh" <<'EOF'
+#!/bin/sh
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-app-vokop"
+default_prerm
+exit 0
+EOF
+
+  cat > "$scripts_dir/app-pre-upgrade.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+  cat > "$scripts_dir/app-post-upgrade.sh" <<'EOF'
+#!/bin/sh
+export PKG_UPGRADE=1
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-app-vokop"
+add_group_and_user
+default_postinst
+EOF
+
+  chmod 0755 "$scripts_dir"/app-*.sh
+}
+
+write_i18n_apk_scripts() {
+  local scripts_dir="$1"
+
+  make_dir "$scripts_dir"
+
+  cat > "$scripts_dir/i18n-pre-install.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+  cat > "$scripts_dir/i18n-post-install.sh" <<'EOF'
+#!/bin/sh
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-i18n-vokop-ru"
+add_group_and_user
+default_postinst
+EOF
+
+  cat > "$scripts_dir/i18n-pre-deinstall.sh" <<'EOF'
+#!/bin/sh
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-i18n-vokop-ru"
+default_prerm
+EOF
+
+  cat > "$scripts_dir/i18n-pre-upgrade.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+
+  cat > "$scripts_dir/i18n-post-upgrade.sh" <<'EOF'
+#!/bin/sh
+export PKG_UPGRADE=1
+[ "${IPKG_NO_SCRIPT}" = "1" ] && exit 0
+[ -s ${IPKG_INSTROOT}/lib/functions.sh ] || exit 0
+. ${IPKG_INSTROOT}/lib/functions.sh
+export root="${IPKG_INSTROOT}"
+export pkgname="luci-i18n-vokop-ru"
+add_group_and_user
+default_postinst
+EOF
+
+  chmod 0755 "$scripts_dir"/i18n-*.sh
+}
+
+build_apk_package() {
+  local apk_bin="$1"
+  local package_name="$2"
+  local package_version="$3"
+  local description="$4"
+  local depends="$5"
+  local files_root="$6"
+  local scripts_dir="$7"
+  local script_prefix="$8"
+  local output_file="$9"
+  local temp_root="$BUILD_DIR/manual/${package_name}.apk-root"
+  local temp_scripts="$BUILD_DIR/manual/${package_name}.apk-scripts"
+  local maintainer="${10}"
+
+  rm -rf "$temp_root" "$temp_scripts"
+  cp -a "$files_root" "$temp_root"
+  cp -a "$scripts_dir" "$temp_scripts"
+
+  unshare -r sh -c '
+    chown -R 0:0 "$1" "$2"
+    shift 2
+    exec "$@"
+  ' sh "$temp_root" "$temp_scripts" \
+    "$apk_bin" mkpkg \
+    --files "$temp_root" \
+    --output "$output_file" \
+    -I "name:${package_name}" \
+    -I "version:${package_version}" \
+    -I "description:${description}" \
+    -I "arch:noarch" \
+    -I "license:GPL-2.0-or-later" \
+    -I "origin:vokop" \
+    -I "maintainer:${maintainer}" \
+    -I "url:${PROJECT_URL}" \
+    -I "depends:${depends}" \
+    -s "pre-install:${temp_scripts}/${script_prefix}-pre-install.sh" \
+    -s "post-install:${temp_scripts}/${script_prefix}-post-install.sh" \
+    -s "pre-deinstall:${temp_scripts}/${script_prefix}-pre-deinstall.sh" \
+    -s "pre-upgrade:${temp_scripts}/${script_prefix}-pre-upgrade.sh" \
+    -s "post-upgrade:${temp_scripts}/${script_prefix}-post-upgrade.sh"
+}
+
+verify_ipk_metadata() {
+  local package_file="$1"
+  local expected_package="$2"
+  local expected_version="$3"
+  local tmp_dir
+
+  tmp_dir="$(mktemp -d)"
+  tar -xzf "$package_file" -C "$tmp_dir"
+  tar -xzf "$tmp_dir/control.tar.gz" -C "$tmp_dir"
+  grep -q "^Package: ${expected_package}$" "$tmp_dir/control"
+  grep -q "^Version: ${expected_version}$" "$tmp_dir/control"
+  if [[ "$expected_package" == "vokop" ]]; then
+    grep -q "^Conflicts: ${BACKEND_CONFLICTS_IPK}$" "$tmp_dir/control"
+  fi
+  rm -rf "$tmp_dir"
+}
+
+verify_apk_metadata() {
+  local apk_bin="$1"
+  local package_file="$2"
+  local expected_package="$3"
+  local expected_version="$4"
+  local dump_file
+
+  dump_file="$(mktemp)"
+  "$apk_bin" adbdump "$package_file" > "$dump_file"
+  grep -q "^  name: ${expected_package}$" "$dump_file"
+  grep -q "^  version: ${expected_version}$" "$dump_file"
+  if [[ "$expected_package" == "vokop" ]]; then
+    for conflict in https-dns-proxy nextdns luci-app-passwall luci-app-passwall2; do
+      grep -q "^[[:space:]]*- '!${conflict}'$" "$dump_file"
+    done
+  fi
+  rm -f "$dump_file"
+}
+
+cleanup_work_dir() {
+  rm -rf "$BUILD_DIR/manual" "$BUILD_DIR/ipk-build.log"
+}
+
+print_summary() {
+  local output_dir="$1"
+
+  echo "Build root: $ROOT_DIR"
+  echo "Output dir: $output_dir"
+  echo "Artifacts:"
+  find "$output_dir" -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) | sort
+}
+
+main() {
+  local output_dir
+  local ipk_archive
+  local apk_archive
+  local ipk_sdk_dir
+  local apk_sdk_dir
+  local po2lmo_bin
+  local ipkg_build_bin
+  local apk_bin
+  local manual_root="$BUILD_DIR/manual"
+  local backend_root="$manual_root/backend-root"
+  local app_root="$manual_root/app-root"
+  local i18n_root="$manual_root/i18n-root"
+  local backend_control="$manual_root/backend-ipk-control"
+  local app_control="$manual_root/app-ipk-control"
+  local i18n_control="$manual_root/i18n-ipk-control"
+  local apk_scripts="$manual_root/apk-scripts"
+  local backend_size
+  local app_size
+  local i18n_size
+
+  ensure_host_deps
+
+  mkdir -p "$BUILD_DIR" "$SDK_CACHE_DIR"
+  exec 9>"$SDK_CACHE_DIR/.build.lock"
+  if ! flock -n 9; then
+    echo "Another Vokop package build is already running" >&2
+    exit 1
+  fi
+  output_dir="$OUTPUT_DIR"
+  mkdir -p "$output_dir"
+  rm -f "$output_dir"/vokop_* "$output_dir"/luci-app-vokop_* "$output_dir"/luci-i18n-vokop-ru_*
+
+  ipk_archive="$(download_sdk_archive "$IPK_SDK_URL")"
+  apk_archive="$(download_sdk_archive "$APK_SDK_URL")"
+  ipk_sdk_dir="$(extract_sdk ipk "$ipk_archive" "$IPK_SDK_URL")"
+  apk_sdk_dir="$(extract_sdk apk "$apk_archive" "$APK_SDK_URL")"
+
+  po2lmo_bin="$(ensure_po2lmo "$ipk_sdk_dir")"
+  ipkg_build_bin="$ipk_sdk_dir/scripts/ipkg-build"
+  apk_bin="$apk_sdk_dir/staging_dir/host/bin/apk"
+  [[ -x "$ipkg_build_bin" ]] || { echo "ipkg-build not found at $ipkg_build_bin" >&2; exit 1; }
+  [[ -x "$apk_bin" ]] || { echo "apk host tool not found at $apk_bin" >&2; exit 1; }
+
+  build_backend_root "$backend_root"
+  build_app_root "$app_root"
+  build_i18n_root "$i18n_root" "$po2lmo_bin"
+
+  backend_size="$(installed_size_bytes "$backend_root")"
+  app_size="$(installed_size_bytes "$app_root")"
+  i18n_size="$(installed_size_bytes "$i18n_root")"
+
+  write_backend_ipk_control "$backend_control" "$backend_size"
+  write_app_ipk_control "$app_control" "$app_size"
+  write_i18n_ipk_control "$i18n_control" "$i18n_size"
+
+  build_ipk_package \
+    "$ipkg_build_bin" \
+    "vokop" \
+    "$backend_root" \
+    "$backend_control" \
+    "$output_dir/vokop_${RELEASE_VERSION}.ipk"
+
+  build_ipk_package \
+    "$ipkg_build_bin" \
+    "luci-app-vokop" \
+    "$app_root" \
+    "$app_control" \
+    "$output_dir/luci-app-vokop_${RELEASE_VERSION}.ipk"
+
+  build_ipk_package \
+    "$ipkg_build_bin" \
+    "luci-i18n-vokop-ru" \
+    "$i18n_root" \
+    "$i18n_control" \
+    "$output_dir/luci-i18n-vokop-ru_${RELEASE_VERSION}.ipk"
+
+  generate_apk_metadata_files "vokop" "$backend_root" "/etc/config/vokop" "/etc/config/vokop_management"
+  generate_apk_metadata_files "luci-app-vokop" "$app_root"
+  generate_apk_metadata_files "luci-i18n-vokop-ru" "$i18n_root"
+  write_backend_apk_scripts "$apk_scripts"
+  write_app_apk_scripts "$apk_scripts"
+  write_i18n_apk_scripts "$apk_scripts"
+
+  build_apk_package \
+    "$apk_bin" \
+    "vokop" \
+    "$APK_INTERNAL_VERSION" \
+    "$BACKEND_DESCRIPTION" \
+    "$BACKEND_DEPENDS_APK" \
+    "$backend_root" \
+    "$apk_scripts" \
+    "backend" \
+    "$output_dir/vokop_${RELEASE_VERSION}.apk" \
+    "$MAINTAINER"
+
+  build_apk_package \
+    "$apk_bin" \
+    "luci-app-vokop" \
+    "$APK_INTERNAL_VERSION" \
+    "$APP_DESCRIPTION" \
+    "$APP_DEPENDS_APK" \
+    "$app_root" \
+    "$apk_scripts" \
+    "app" \
+    "$output_dir/luci-app-vokop_${RELEASE_VERSION}.apk" \
+    "$MAINTAINER"
+
+  build_apk_package \
+    "$apk_bin" \
+    "luci-i18n-vokop-ru" \
+    "$APK_INTERNAL_VERSION" \
+    "$I18N_DESCRIPTION" \
+    "libc luci-app-vokop" \
+    "$i18n_root" \
+    "$apk_scripts" \
+    "i18n" \
+    "$output_dir/luci-i18n-vokop-ru_${RELEASE_VERSION}.apk" \
+    "$MAINTAINER"
+
+  verify_ipk_metadata "$output_dir/vokop_${RELEASE_VERSION}.ipk" "vokop" "$RELEASE_VERSION"
+  verify_ipk_metadata "$output_dir/luci-app-vokop_${RELEASE_VERSION}.ipk" "luci-app-vokop" "$RELEASE_VERSION"
+  verify_ipk_metadata "$output_dir/luci-i18n-vokop-ru_${RELEASE_VERSION}.ipk" "luci-i18n-vokop-ru" "$RELEASE_VERSION"
+  verify_apk_metadata "$apk_bin" "$output_dir/vokop_${RELEASE_VERSION}.apk" "vokop" "$APK_INTERNAL_VERSION"
+  verify_apk_metadata "$apk_bin" "$output_dir/luci-app-vokop_${RELEASE_VERSION}.apk" "luci-app-vokop" "$APK_INTERNAL_VERSION"
+  verify_apk_metadata "$apk_bin" "$output_dir/luci-i18n-vokop-ru_${RELEASE_VERSION}.apk" "luci-i18n-vokop-ru" "$APK_INTERNAL_VERSION"
+
+  cleanup_work_dir
+  print_summary "$output_dir"
+}
+
+main "$@"

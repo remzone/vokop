@@ -1,0 +1,61 @@
+{
+  "luci-app-vokop": {
+    "description": "Grant UCI and RPC access to LuCI app Vokop",
+    "read": {
+      "file": {
+        "/etc/init.d/vokop": [
+          "exec"
+        ],
+        "/var/run/vokop/section-cache/*": [
+          "read"
+        ],
+        "/var/run/vokop/component-actions/*": [
+          "read"
+        ],
+        "/var/run/vokop/ui-state/*": [
+          "read"
+        ],
+        "/var/run/vokop/ui-state/service-actions/*": [
+          "read"
+        ],
+        "/var/run/vokop/ui-state/latency-actions/*": [
+          "read"
+        ],
+        "/usr/bin/vokop": [
+          "exec"
+        ]
+      },
+      "ubus": {
+        "luci-rpc": [
+          "getDHCPLeases",
+          "getHostHints"
+        ],
+        "network.interface": [
+          "dump"
+        ],
+        "service": [
+          "list"
+        ]
+      },
+      "uci": [
+        "vokop"
+      ]
+    },
+    "write": {
+      "file": {
+        "/var/run/vokop/ui-state/*": [
+          "write"
+        ],
+        "/var/run/vokop/ui-state/service-actions/*": [
+          "write"
+        ],
+        "/var/run/vokop/ui-state/latency-actions/*": [
+          "write"
+        ]
+      },
+      "uci": [
+        "vokop"
+      ]
+    }
+  }
+}

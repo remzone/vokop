@@ -1,0 +1,25 @@
+{
+  "luci-app-vokop-management": {
+    "description": "Configure Vokop bounded remote control; no credential file access",
+    "read": {
+      "uci": [
+        "vokop_management"
+      ],
+      "file": {
+        "/var/run/vokop/management/status.json": [
+          "read"
+        ]
+      }
+    },
+    "write": {
+      "uci": [
+        "vokop_management"
+      ],
+      "file": {
+        "/etc/init.d/vokop-management": [
+          "exec"
+        ]
+      }
+    }
+  }
+}

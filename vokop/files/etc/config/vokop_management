@@ -1,0 +1,6 @@
+config settings 'settings'
+        option enabled '0'
+        option panel_url ''
+        option device_id ''
+        option token_file '/etc/vokop/management.token'
+        option poll_seconds '60'

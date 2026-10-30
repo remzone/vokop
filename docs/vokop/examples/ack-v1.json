@@ -1,0 +1,9 @@
+{
+  "schema": "vokop.ack.v1",
+  "results": [
+    {
+      "id": 1,
+      "status": "applied"
+    }
+  ]
+}

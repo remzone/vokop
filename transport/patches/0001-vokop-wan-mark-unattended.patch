@@ -1,0 +1,591 @@
+diff --git a/client/main.go b/client/main.go
+index 73dfd17..9dc2c3a 100644
+--- a/client/main.go
++++ b/client/main.go
+@@ -32,7 +32,6 @@ import (
+ 	tlsclient "github.com/bogdanfinn/tls-client"
+ 	"github.com/bogdanfinn/tls-client/profiles"
+ 
+-	"github.com/bschaatsbergen/dnsdialer"
+ 	"github.com/cacggghp/vk-turn-proxy/tcputil"
+ 	"github.com/cbeuw/connutil"
+ 	"github.com/google/uuid"
+@@ -66,6 +65,7 @@ var (
+ 	handshakeSem         = make(chan struct{}, 3)
+ 	isDebug              bool
+ 	manualCaptcha        bool
++	unattended           bool
+ 	autoCaptchaSliderPOC bool
+ )
+ 
+@@ -126,15 +126,15 @@ func newDirectNet() transport.Net {
+ }
+ 
+ func (directNet) ListenPacket(network string, address string) (net.PacketConn, error) {
+-	return net.ListenPacket(network, address)
++	return markedListenPacket(network, address)
+ }
+ 
+ func (directNet) ListenUDP(network string, locAddr *net.UDPAddr) (transport.UDPConn, error) {
+-	return net.ListenUDP(network, locAddr)
++	return markedListenUDP(network, locAddr)
+ }
+ 
+ func (directNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.TCPListener, error) {
+-	listener, err := net.ListenTCP(network, laddr)
++	listener, err := markedListenTCP(network, laddr)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -143,15 +143,16 @@ func (directNet) ListenTCP(network string, laddr *net.TCPAddr) (transport.TCPLis
+ }
+ 
+ func (directNet) Dial(network, address string) (net.Conn, error) {
+-	return net.Dial(network, address)
++	d := getCustomNetDialer()
++	return d.Dial(network, address)
+ }
+ 
+ func (directNet) DialUDP(network string, laddr, raddr *net.UDPAddr) (transport.UDPConn, error) {
+-	return net.DialUDP(network, laddr, raddr)
++	return markedDialUDP(network, laddr, raddr)
+ }
+ 
+ func (directNet) DialTCP(network string, laddr, raddr *net.TCPAddr) (transport.TCPConn, error) {
+-	return net.DialTCP(network, laddr, raddr)
++	return markedDialTCP(network, laddr, raddr)
+ }
+ 
+ func (directNet) ResolveIPAddr(network, address string) (*net.IPAddr, error) {
+@@ -179,11 +180,16 @@ func (directNet) InterfaceByName(name string) (*transport.Interface, error) {
+ }
+ 
+ func (directNet) CreateDialer(dialer *net.Dialer) transport.Dialer {
+-	return directDialer{Dialer: dialer}
++	copy := *dialer
++	copy.Control = wanSocketControl
++	copy.Resolver = wanResolver()
++	return directDialer{Dialer: &copy}
+ }
+ 
+ func (directNet) CreateListenConfig(listenerConfig *net.ListenConfig) transport.ListenConfig {
+-	return directListenConfig{ListenConfig: listenerConfig}
++	copy := *listenerConfig
++	copy.Control = wanSocketControl
++	return directListenConfig{ListenConfig: &copy}
+ }
+ 
+ func (d directDialer) Dial(network, address string) (net.Conn, error) {
+@@ -248,26 +254,8 @@ func generateFakeCursor() string {
+ }
+ 
+ func getCustomNetDialer() net.Dialer {
+-	return net.Dialer{
+-		Timeout:   20 * time.Second,
+-		KeepAlive: 30 * time.Second,
+-		Resolver: &net.Resolver{
+-			PreferGo: true,
+-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+-				var d net.Dialer
+-				dnsServers := []string{"77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
+-				var lastErr error
+-				for _, dns := range dnsServers {
+-					conn, err := d.DialContext(ctx, "udp", dns)
+-					if err == nil {
+-						return conn, nil
+-					}
+-					lastErr = err
+-				}
+-				return nil, lastErr
+-			},
+-		},
+-	}
++	return net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second,
++		Control: wanSocketControl, Resolver: wanResolver()}
+ }
+ 
+ // endregion
+@@ -710,7 +698,7 @@ func (c *StreamCredentialsCache) invalidate(streamID int) {
+ 	log.Printf("[STREAM %d] [VK Auth] Credentials cache invalidated", streamID)
+ }
+ 
+-func getVkCredsCached(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
++func getVkCredsCached(ctx context.Context, link string, streamID int, dialer contextDialer) (string, string, string, error) {
+ 	cache := getStreamCache(streamID)
+ 	cacheID := getCacheID(streamID)
+ 
+@@ -748,7 +736,7 @@ var (
+ 	globalLastVkFetchTime time.Time
+ )
+ 
+-func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
++func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dialer contextDialer) (string, string, string, error) {
+ 	vkRequestMu.Lock()
+ 	defer vkRequestMu.Unlock()
+ 
+@@ -773,7 +761,7 @@ func fetchVkCredsSerialized(ctx context.Context, link string, streamID int, dial
+ 	return fetchVkCreds(ctx, link, streamID, dialer)
+ }
+ 
+-func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdialer.Dialer) (string, string, string, error) {
++func fetchVkCreds(ctx context.Context, link string, streamID int, dialer contextDialer) (string, string, string, error) {
+ 	// Check Global Lockout to prevent API bans
+ 	if time.Now().Unix() < globalCaptchaLockout.Load() {
+ 		return "", "", "", fmt.Errorf("CAPTCHA_WAIT_REQUIRED: global lockout active")
+@@ -808,7 +796,7 @@ func fetchVkCreds(ctx context.Context, link string, streamID int, dialer *dnsdia
+ 	return "", "", "", fmt.Errorf("all VK credentials failed: %w", lastErr)
+ }
+ 
+-func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer *dnsdialer.Dialer, jar tlsclient.CookieJar) (string, string, string, error) {
++func getTokenChain(ctx context.Context, link string, streamID int, creds VKCredentials, dialer contextDialer, jar tlsclient.CookieJar) (string, string, string, error) {
+ 	profile := Profile{
+ 		UserAgent:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+ 		SecChUa:         `"Not(A:Brand";v="99", "Google Chrome";v="146", "Chromium";v="146"`,
+@@ -821,6 +809,7 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
+ 		tlsclient.WithClientProfile(profiles.Chrome_146),
+ 		tlsclient.WithCookieJar(jar),
+ 		tlsclient.WithDialer(getCustomNetDialer()),
++		tlsclient.WithDisableHttp3(), // QUIC creates its own UDP sockets outside net.Dialer Control.
+ 	)
+ 	if err != nil {
+ 		return "", "", "", fmt.Errorf("failed to initialize tls_client: %w", err)
+@@ -916,6 +905,12 @@ func getTokenChain(ctx context.Context, link string, streamID int, creds VKCrede
+ 		if errObj, hasErr := resp["error"].(map[string]interface{}); hasErr {
+ 			captchaErr := ParseVkCaptchaError(errObj)
+ 			if captchaErr != nil && captchaErr.IsCaptchaError() {
++				if unattended {
++					globalCaptchaLockout.Store(time.Now().Add(24 * time.Hour).Unix())
++					_ = writeTransportStatus("captcha_required")
++					log.Print("CAPTCHA_REQUIRED")
++					return "", "", "", fmt.Errorf("CAPTCHA_REQUIRED")
++				}
+ 				solveMode, hasSolveMode := captchaSolveModeForAttempt(attempt, manualCaptcha, autoCaptchaSliderPOC)
+ 				if !hasSolveMode {
+ 					log.Printf("[STREAM %d] [Captcha] No more solve modes available (attempt %d)", streamID, attempt+1)
+@@ -1209,7 +1204,9 @@ func getYandexCreds(link string) (string, string, string, error) {
+ 	}
+ 
+ 	endpoint := "https://" + telemostConfHost + telemostConfPath
++	wanDialer := getCustomNetDialer()
+ 	tr := &http.Transport{
++		DialContext:         wanDialer.DialContext,
+ 		MaxIdleConns:        100,
+ 		MaxIdleConnsPerHost: 100,
+ 		IdleConnTimeout:     90 * time.Second,
+@@ -1264,7 +1261,7 @@ func getYandexCreds(link string) (string, string, string, error) {
+ 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+ 	defer cancel()
+ 
+-	dialer := websocket.Dialer{}
++	dialer := websocket.Dialer{NetDialContext: wanDialer.DialContext}
+ 	var conn *websocket.Conn
+ 	conn, resp, err = dialer.DialContext(ctx, data.Wss, h)
+ 	if err != nil {
+@@ -1562,11 +1559,11 @@ func oneTurnConnection(ctx context.Context, turnParams *turnParams, peer *net.UD
+ 	fmt.Println(turnServerUDPAddr.IP)
+ 	var cfg *turn.ClientConfig
+ 	var turnConn net.PacketConn
+-	var d net.Dialer
++	d := getCustomNetDialer()
+ 	ctx1, cancel := context.WithTimeout(ctx, 5*time.Second)
+ 	defer cancel()
+ 	if turnParams.udp {
+-		conn, err2 := net.DialUDP("udp", nil, turnServerUDPAddr) // nolint: noctx
++		conn, err2 := markedDialUDP("udp", nil, turnServerUDPAddr) // nolint: noctx
+ 		if err2 != nil {
+ 			err = fmt.Errorf("failed to connect to TURN server: %s", err2)
+ 			return
+@@ -1812,7 +1809,14 @@ func main() {
+ 	vlessMode := flag.Bool("vless", false, "VLESS mode: forward TCP connections (for VLESS) instead of UDP packets")
+ 	debugFlag := flag.Bool("debug", false, "enable debug logging")
+ 	manualCaptchaFlag := flag.Bool("manual-captcha", false, "skip auto captcha solving, use manual mode immediately")
++	unattendedFlag := flag.Bool("unattended", true, "do not solve captchas or launch a browser; report CAPTCHA_REQUIRED")
++	statusFileFlag := flag.String("status-file", "", "local supervisor enum status file (no secrets)")
+ 	flag.Parse()
++	unattended = *unattendedFlag
++	statusPath = *statusFileFlag
++	if err := writeTransportStatus("starting"); err != nil {
++		log.Fatal("cannot initialize transport status file")
++	}
+ 	if *peerAddr == "" {
+ 		log.Panicf("Need peer address!")
+ 	}
+@@ -1834,11 +1838,8 @@ func main() {
+ 		parts := strings.Split(*vklink, "join/")
+ 		link = parts[len(parts)-1]
+ 
+-		dialer := dnsdialer.New(
+-			dnsdialer.WithResolvers("77.88.8.8:53", "77.88.8.1:53", "8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"),
+-			dnsdialer.WithStrategy(dnsdialer.Fallback{}),
+-			dnsdialer.WithCache(100, 10*time.Hour, 10*time.Hour),
+-		)
++		d := getCustomNetDialer()
++		dialer := &d
+ 
+ 		getCreds = func(ctx context.Context, s string, streamID int) (string, string, string, error) {
+ 			return getVkCredsCached(ctx, s, streamID, dialer)
+@@ -1873,7 +1874,7 @@ func main() {
+ 		return
+ 	}
+ 
+-	listenConn, err := net.ListenPacket("udp", *listen)
++	listenConn, err := markedListenPacket("udp", *listen)
+ 	if err != nil {
+ 		log.Panicf("Failed to listen: %s", err)
+ 	}
+@@ -2098,6 +2099,9 @@ func maintainVLESSSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr
+ 
+ 		smuxSess, cleanup, err := createSmuxSession(ctx, tp, peer, id)
+ 		if err != nil {
++			if pool.count() == 0 {
++				_ = writeTransportStatus("error")
++			}
+ 			log.Printf("[session %d] setup error: %s, retrying...", id, err)
+ 			select {
+ 			case <-ctx.Done():
+@@ -2108,6 +2112,7 @@ func maintainVLESSSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr
+ 		}
+ 
+ 		pool.add(smuxSess)
++		_ = writeTransportStatus("ready")
+ 		log.Printf("[session %d] connected (active: %d)", id, pool.count())
+ 
+ 		for !smuxSess.IsClosed() {
+@@ -2121,6 +2126,9 @@ func maintainVLESSSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr
+ 		}
+ 
+ 		pool.remove(smuxSess)
++		if pool.count() == 0 {
++			_ = writeTransportStatus("error")
++		}
+ 		cleanup()
+ 		log.Printf("[session %d] disconnected (active: %d), reconnecting...", id, pool.count())
+ 
+@@ -2170,14 +2178,14 @@ func createSmuxSession(ctx context.Context, tp *turnParams, peer *net.UDPAddr, i
+ 	ctx1, cancel1 := context.WithTimeout(ctx, 5*time.Second)
+ 	defer cancel1()
+ 	if tp.udp {
+-		c, err1 := net.DialUDP("udp", nil, turnServerUDPAddr)
++		c, err1 := markedDialUDP("udp", nil, turnServerUDPAddr)
+ 		if err1 != nil {
+ 			return nil, nil, fmt.Errorf("dial TURN (udp): %w", err1)
+ 		}
+ 		cleanupFns = append(cleanupFns, func() { _ = c.Close() })
+ 		turnConn = &connectedUDPConn{c}
+ 	} else {
+-		var d net.Dialer
++		d := getCustomNetDialer()
+ 		c, err1 := d.DialContext(ctx1, "tcp", turnServerAddr)
+ 		if err1 != nil {
+ 			return nil, nil, fmt.Errorf("dial TURN (tcp): %w", err1)
+diff --git a/client/manual_captcha.go b/client/manual_captcha.go
+index 826478c..a1ab223 100644
+--- a/client/manual_captcha.go
++++ b/client/manual_captcha.go
+@@ -17,8 +17,6 @@ import (
+ 	"runtime"
+ 	"strings"
+ 	"time"
+-
+-	"github.com/bschaatsbergen/dnsdialer"
+ )
+ 
+ const captchaListenPort = "8765"
+@@ -335,8 +333,10 @@ func rewriteCaptchaHTML(html string, targetURL *neturl.URL) string {
+ 	}
+ }
+ 
+-func newCaptchaProxyTransport(dialer *dnsdialer.Dialer) *http.Transport {
++func newCaptchaProxyTransport(dialer contextDialer) *http.Transport {
++	wanDialer := getCustomNetDialer()
+ 	transport := &http.Transport{
++		DialContext:           wanDialer.DialContext,
+ 		MaxIdleConns:          100,
+ 		MaxIdleConnsPerHost:   100,
+ 		IdleConnTimeout:       90 * time.Second,
+@@ -443,7 +443,7 @@ button{font-size:24px;padding:12px 32px;margin-top:12px;cursor:pointer}</style>
+ 	return runCaptchaServerAndWait(mux, localCaptchaOrigin(), keyCh, "captcha HTTP server error")
+ }
+ 
+-func solveCaptchaViaProxy(redirectURI string, dialer *dnsdialer.Dialer) (string, error) {
++func solveCaptchaViaProxy(redirectURI string, dialer contextDialer) (string, error) {
+ 	keyCh := make(chan string, 1)
+ 
+ 	targetURL, err := neturl.Parse(redirectURI)
+diff --git a/client/wan_linux.go b/client/wan_linux.go
+new file mode 100644
+index 0000000..3873242
+--- /dev/null
++++ b/client/wan_linux.go
+@@ -0,0 +1,112 @@
++//go:build linux
++
++// SPDX-License-Identifier: GPL-3.0-or-later
++// Vokop: every transport/credential/bootstrap socket must bypass the tunnel.
++package main
++
++import (
++	"context"
++	"fmt"
++	"net"
++	"syscall"
++	"time"
++)
++
++const vokopWANMark = 0x08000000
++
++type contextDialer interface {
++	DialContext(context.Context, string, string) (net.Conn, error)
++}
++
++// A failed setsockopt aborts the socket, rather than silently recursing into Vokop.
++// Root or CAP_NET_ADMIN/CAP_NET_RAW (kernel dependent) is required on OpenWrt.
++func wanSocketControl(network, address string, raw syscall.RawConn) error {
++	host, _, _ := net.SplitHostPort(address)
++	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
++		return nil
++	}
++	var sockErr error
++	if err := raw.Control(func(fd uintptr) {
++		sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_MARK, vokopWANMark)
++	}); err != nil {
++		return fmt.Errorf("WAN socket control: %w", err)
++	}
++	if sockErr != nil {
++		return fmt.Errorf("WAN mark required: %w", sockErr)
++	}
++	return nil
++}
++
++func wanResolver() *net.Resolver {
++	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
++		d := net.Dialer{Timeout: 5 * time.Second, Control: wanSocketControl}
++		// Direct IP resolvers avoid FakeIP and router DNS recursion. Keep TCP for
++		// truncated replies; unlike upstream this does not force all queries UDP.
++		var last error
++		for _, server := range []string{"77.88.8.8:53", "77.88.8.1:53", "1.1.1.1:53"} {
++			c, err := d.DialContext(ctx, network, server)
++			if err == nil {
++				return c, nil
++			}
++			last = err
++		}
++		return nil, last
++	}}
++}
++
++func init() {
++	// Covers net.ResolveUDPAddr/ResolveTCPAddr used for peer and dynamic relays.
++	net.DefaultResolver = wanResolver()
++}
++
++func markedDialUDP(network string, local, remote *net.UDPAddr) (*net.UDPConn, error) {
++	d := getCustomNetDialer()
++	if local != nil {
++		d.LocalAddr = local
++	}
++	c, err := d.Dial(network, remote.String())
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.UDPConn), nil
++}
++
++func markedDialTCP(network string, local, remote *net.TCPAddr) (*net.TCPConn, error) {
++	d := getCustomNetDialer()
++	if local != nil {
++		d.LocalAddr = local
++	}
++	c, err := d.Dial(network, remote.String())
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.TCPConn), nil
++}
++
++func markedListenPacket(network, address string) (net.PacketConn, error) {
++	lc := net.ListenConfig{Control: wanSocketControl}
++	return lc.ListenPacket(context.Background(), network, address)
++}
++func markedListenUDP(network string, local *net.UDPAddr) (*net.UDPConn, error) {
++	address := ":0"
++	if local != nil {
++		address = local.String()
++	}
++	c, err := markedListenPacket(network, address)
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.UDPConn), nil
++}
++func markedListenTCP(network string, local *net.TCPAddr) (*net.TCPListener, error) {
++	address := ":0"
++	if local != nil {
++		address = local.String()
++	}
++	lc := net.ListenConfig{Control: wanSocketControl}
++	c, err := lc.Listen(context.Background(), network, address)
++	if err != nil {
++		return nil, err
++	}
++	return c.(*net.TCPListener), nil
++}
+diff --git a/client/wan_linux_test.go b/client/wan_linux_test.go
+new file mode 100644
+index 0000000..2c317cf
+--- /dev/null
++++ b/client/wan_linux_test.go
+@@ -0,0 +1,49 @@
++//go:build linux
++
++package main
++
++import (
++	"errors"
++	"testing"
++)
++
++type refusedRawConn struct{ called bool }
++
++func (r *refusedRawConn) Control(f func(uintptr)) error {
++	r.called = true
++	return errors.New("socket unavailable")
++}
++func (r *refusedRawConn) Read(f func(uintptr) bool) error  { return errors.New("unused") }
++func (r *refusedRawConn) Write(f func(uintptr) bool) error { return errors.New("unused") }
++
++func TestWANControlPreservesLoopback(t *testing.T) {
++	for _, address := range []string{"127.0.0.1:9000", "[::1]:9000"} {
++		raw := &refusedRawConn{}
++		if err := wanSocketControl("tcp", address, raw); err != nil {
++			t.Fatal(err)
++		}
++		if raw.called {
++			t.Fatalf("loopback %s unexpectedly marked", address)
++		}
++	}
++}
++
++func TestWANControlFailsClosed(t *testing.T) {
++	raw := &refusedRawConn{}
++	if err := wanSocketControl("udp", "192.0.2.1:3478", raw); err == nil {
++		t.Fatal("unmarked socket accepted")
++	}
++	if !raw.called {
++		t.Fatal("socket control not attempted")
++	}
++}
++
++func TestWANResolverAndDialerAreMarked(t *testing.T) {
++	d := getCustomNetDialer()
++	if d.Control == nil || d.Resolver == nil || !d.Resolver.PreferGo || d.Resolver.Dial == nil {
++		t.Fatal("dialer can bypass marked socket control")
++	}
++	if vokopWANMark != 0x08000000 {
++		t.Fatal("Forkop/Vokop outbound mark mismatch")
++	}
++}
+diff --git a/client/status.go b/client/status.go
+new file mode 100644
+index 0000000..c8e5a19
+--- /dev/null
++++ b/client/status.go
+@@ -0,0 +1,52 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++package main
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++	"sync"
++)
++
++var statusMu sync.Mutex
++var statusPath string
++var captchaStatusLatched bool
++
++// This is local supervisory data only. Never write API responses or credentials.
++func writeTransportStatus(state string) error {
++	statusMu.Lock()
++	defer statusMu.Unlock()
++	switch state {
++	case "starting", "ready", "captcha_required", "error":
++	default:
++		return fmt.Errorf("invalid transport status")
++	}
++	if state == "captcha_required" {
++		captchaStatusLatched = true
++	}
++	if captchaStatusLatched {
++		state = "captcha_required"
++	}
++	if statusPath == "" {
++		return nil
++	}
++	f, err := os.CreateTemp(filepath.Dir(statusPath), ".vk-status-*")
++	if err != nil {
++		return err
++	}
++	defer os.Remove(f.Name())
++	if err = f.Chmod(0600); err == nil {
++		_, err = f.WriteString(state + "\n")
++	}
++	if err == nil {
++		err = f.Sync()
++	}
++	closeErr := f.Close()
++	if err != nil {
++		return err
++	}
++	if closeErr != nil {
++		return closeErr
++	}
++	return os.Rename(f.Name(), statusPath)
++}
+diff --git a/client/status_test.go b/client/status_test.go
+new file mode 100644
+index 0000000..1933577
+--- /dev/null
++++ b/client/status_test.go
+@@ -0,0 +1,40 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestStatusFileEnumModeAndCaptchaLatch(t *testing.T) {
++	previousPath, previousLatch := statusPath, captchaStatusLatched
++	defer func() { statusPath, captchaStatusLatched = previousPath, previousLatch }()
++	statusPath = filepath.Join(t.TempDir(), "profile.status")
++	captchaStatusLatched = false
++	if err := writeTransportStatus("starting"); err != nil {
++		t.Fatal(err)
++	}
++	if err := writeTransportStatus("captcha_required"); err != nil {
++		t.Fatal(err)
++	}
++	if err := writeTransportStatus("ready"); err != nil {
++		t.Fatal(err)
++	}
++	data, err := os.ReadFile(statusPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if string(data) != "captcha_required\n" {
++		t.Fatalf("unexpected status: %q", data)
++	}
++	info, err := os.Stat(statusPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if info.Mode().Perm() != 0600 {
++		t.Fatalf("status mode: %v", info.Mode())
++	}
++	if writeTransportStatus("token=secret") == nil {
++		t.Fatal("arbitrary status accepted")
++	}
++}

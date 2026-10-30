@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "vokop.commands.v1"
+    },
+    "commands": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "type": {
+            "enum": [
+              "refresh_subscriptions",
+              "restart_vkturn",
+              "disable_vkturn"
+            ]
+          },
+          "expires_at": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "expires_at"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "commands"
+  ],
+  "additionalProperties": false,
+  "$comment": "Panel-output schema. Client may return rejected for unknown command type. Strictly increasing IDs and relative <=24h expiry checked separately."
+}
